@@ -1,0 +1,183 @@
+# =============================================================================
+# Nature Exposure & Mood — Mixed Model Analysis
+# Applied Statistics Mini Project
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Setup
+# -----------------------------------------------------------------------------
+
+rm(list = ls())
+
+library(pastecs)
+library(ggplot2);  theme_set(theme_bw())
+library(ggpubr)
+library(ggfortify)
+library(GGally)
+library(car)
+library(tidyverse)
+library(readxl)
+library(glmmTMB)
+library(performance)
+
+source("./Recap Scripts 2/Custom functions.R")
+
+# -----------------------------------------------------------------------------
+# Load & Clean Data
+# -----------------------------------------------------------------------------
+
+dd <- read_excel()
+strings2factors(dd)
+
+# Keep relevant variables
+dd <- select(dd, prepost, Greenness, `Sex (M/F)`, T_mean, `Participant ID`,
+             Intervention.x, Age, `Total Mood Disturbance Analysis`,
+             Precipitation, SR_mean, DLI, Date)
+
+# Parse date
+dd$Date <- as.Date(dd$Date, "%d/%m/%Y")
+
+# Rename for readability
+dd <- dd %>%
+  rename(
+    Time        = prepost,
+    Sex         = `Sex (M/F)`,
+    Subject     = `Participant ID`,
+    TMD         = `Total Mood Disturbance Analysis`,
+    Environment = Intervention.x,
+    Sun         = SR_mean
+  )
+
+# Set factor levels
+dd$Time          <- factor(dd$Time,          levels = c("Pre", "Post"))
+dd$Precipitation <- factor(dd$Precipitation, levels = c("no rain", "weak rain", "moderate rain"))
+dd$Environment   <- factor(dd$Environment)
+dd$Subject       <- factor(dd$Subject)
+dd$Sex           <- factor(dd$Sex)
+dd$TMD           <- as.numeric(dd$TMD)
+dd$Date2         <- factor(dd$Date)  # date as factor for random effect
+
+str(dd)
+summary(dd)
+table(dd$Time)
+
+# Correlation check — note high correlation: Greenness/Environment, Sun/DLI, DLI/Environment
+round(cor(sapply(dd, as.numeric)), 3)
+
+# -----------------------------------------------------------------------------
+# Exploratory Plots
+# -----------------------------------------------------------------------------
+
+# TMD by Environment and Time
+ggarrange(
+  ggplot(dd, aes(Environment, TMD, colour = Time)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_point(position = position_dodge(width = 0.75), alpha = 0.4) +
+    labs(y = "Total Mood Disturbance"),
+  ggplot(dd, aes(Time, TMD, color = Time)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.2, alpha = 0.4) +
+    labs(y = ""),
+  ncol = 2, common.legend = TRUE, legend = "bottom"
+)
+
+# TMD vs continuous predictors, stratified by Sex and Time
+ggarrange(
+  ggplot(dd, aes(T_mean, TMD, color = Time)) +
+    geom_point() +
+    geom_smooth(method = lm) +
+    facet_grid(Sex ~ Time),
+  ggplot(dd, aes(Sun, TMD, color = Time)) +
+    geom_point() +
+    geom_smooth(method = lm) +
+    labs(y = "") +
+    facet_grid(Sex ~ Time),
+  ncol = 2
+)
+
+# -----------------------------------------------------------------------------
+# Step 1: Select Random Effects Structure
+# (fixed effects held at "beyond optimal")
+# -----------------------------------------------------------------------------
+
+mod.a <- glmmTMB(TMD ~ Time + Environment + Precipitation + Age + Sex + (1|Subject),          dd)
+mod.b <- glmmTMB(TMD ~ Time + Environment + Precipitation + Age + Sex + (1|Date2/Subject),    dd)
+mod.c <- glmmTMB(TMD ~ Time + Environment + Precipitation + Age + Sex + (Time|Subject),       dd)
+mod.d <- glmmTMB(TMD ~ Time + Environment + Precipitation + Age + Sex + (Time|Date2/Subject), dd)
+
+# mod.d is overparameterized — perfect correlation in VarCorr given small sample size
+VarCorr(mod.d)
+
+anova(mod.a, mod.b)
+anova(mod.a, mod.c)
+AIC(mod.a, mod.b, mod.c, mod.d)
+
+# Selected random effects structure: (1|Date2/Subject)
+
+# -----------------------------------------------------------------------------
+# Step 2: Select Fixed Effects Structure
+# (random effects fixed as above)
+# -----------------------------------------------------------------------------
+
+mod.1  <- glmmTMB(TMD ~ 1                                                         + (1|Date2/Subject), dd)
+mod.2  <- glmmTMB(TMD ~ Environment                                               + (1|Date2/Subject), dd)
+mod.3  <- glmmTMB(TMD ~ Environment + Time                                        + (1|Date2/Subject), dd)
+mod.4  <- glmmTMB(TMD ~ Environment + Time + Precipitation                        + (1|Date2/Subject), dd)
+mod.5  <- glmmTMB(TMD ~ Environment + Time + Precipitation + Age                  + (1|Date2/Subject), dd)
+mod.6  <- glmmTMB(TMD ~ Environment + Time + Precipitation + Age + Sex            + (1|Date2/Subject), dd)
+mod.7  <- glmmTMB(TMD ~ Environment * Time + Precipitation + Age + Sex            + (1|Date2/Subject), dd)
+mod.8  <- glmmTMB(TMD ~ Environment + Time * Precipitation + Age + Sex            + (1|Date2/Subject), dd)
+mod.9  <- glmmTMB(TMD ~ Environment + Time + Precipitation * Age + Sex            + (1|Date2/Subject), dd)
+mod.10 <- glmmTMB(TMD ~ Environment + Time + Precipitation + Age * Sex            + (1|Date2/Subject), dd)
+mod.11 <- glmmTMB(TMD ~ Environment * Time * Precipitation + Age + Sex            + (1|Date2/Subject), dd) # multicollinearity
+mod.12 <- glmmTMB(TMD ~ Environment * Time + Precipitation * Age + Sex            + (1|Date2/Subject), dd)
+mod.13 <- glmmTMB(TMD ~ Environment * Time + Precipitation + Age * Sex            + (1|Date2/Subject), dd)
+mod.14 <- glmmTMB(TMD ~ Environment + Time * Precipitation * Age + Sex            + (1|Date2/Subject), dd)
+mod.15 <- glmmTMB(TMD ~ Environment + Time * Precipitation + Age * Sex            + (1|Date2/Subject), dd)
+mod.16 <- glmmTMB(TMD ~ Environment + Time + Precipitation * Age * Sex            + (1|Date2/Subject), dd)
+mod.17 <- glmmTMB(TMD ~ Environment * Time * Precipitation * Age + Sex            + (1|Date2/Subject), dd) # multicollinearity
+mod.18 <- glmmTMB(TMD ~ Environment * Time * Precipitation + Age * Sex            + (1|Date2/Subject), dd) # multicollinearity
+mod.19 <- glmmTMB(TMD ~ Environment * Time + Precipitation * Age * Sex            + (1|Date2/Subject), dd)
+mod.20 <- glmmTMB(TMD ~ Environment + Time * Precipitation * Age * Sex            + (1|Date2/Subject), dd)
+mod.21 <- glmmTMB(TMD ~ Environment * Time * Precipitation * Age * Sex            + (1|Date2/Subject), dd) # multicollinearity
+
+anova(mod.1,  mod.2,  mod.3,  mod.4,  mod.5,  mod.6,  mod.7,  mod.8,  mod.9,  mod.10,
+      mod.11, mod.12, mod.13, mod.14, mod.15, mod.16, mod.17, mod.18, mod.19, mod.20, mod.21)
+
+AIC(mod.1,  mod.2,  mod.3,  mod.4,  mod.5,  mod.6,  mod.7,  mod.8,  mod.9,  mod.10,
+    mod.11, mod.12, mod.13, mod.14, mod.15, mod.16, mod.17, mod.18, mod.19, mod.20, mod.21)
+
+# Selected model: mod.7 — Environment * Time + Precipitation + Age + Sex + (1|Date2/Subject)
+anova(mod.1, mod.7)
+
+# -----------------------------------------------------------------------------
+# Step 3: Model Validation
+# -----------------------------------------------------------------------------
+
+# Influence diagnostics
+infPlot_glmmTMB(mod.7, obs   = TRUE)
+infPlot_glmmTMB(mod.7, group = "Subject")
+
+# Observed group means
+dd %>%
+  group_by(Environment, Time) %>%
+  summarize(mean_TMD = mean(TMD, na.rm = TRUE), .groups = "drop")
+
+# Residual and assumption checks
+check_model(mod.7)
+residualPlots_glmmTMB(mod.7, na.smooth = FALSE)
+
+# Residuals vs fitted (Pearson)
+res_data <- data.frame(
+  fitted = predict(mod.7, type = "response"),
+  resid  = residuals(mod.7, type = "pearson")
+)
+
+ggplot(res_data, aes(x = fitted, y = resid)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(
+    x     = "Fitted values",
+    y     = "Pearson residuals",
+    title = "Homoscedasticity check (Residuals vs Fitted)"
+  )
